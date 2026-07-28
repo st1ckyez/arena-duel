@@ -1160,8 +1160,8 @@ const codeToId = code => 'arena-duel-v1-' + code.toUpperCase();
 // Без TURN за строгим NAT (CGNAT, мобильный интернет) WebRTC не пробивается
 // и «Подключение…» висит вечно. Свежие TURN-креды запрашиваем у metered.ca;
 // если их сервис недоступен — остаёмся на STUN (прямые соединения всё равно работают).
-const METERED_DOMAIN = ''; // например 'arenaduel.metered.live'
-const METERED_KEY = '';
+const METERED_DOMAIN = 'shtduo.metered.live';
+const METERED_KEY = '51a66b98b04d7c30ce75036f62b2622ba94d';
 
 const FALLBACK_ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
