@@ -1157,17 +1157,29 @@ const UI = {
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // без похожих символов
 const codeToId = code => 'arena-duel-v1-' + code.toUpperCase();
 
-// STUN + бесплатные TURN-реле (Open Relay): без TURN за строгим NAT
-// соединение не устанавливается и «Подключение…» висит вечно
-const ICE_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-  ],
-};
+// Без TURN за строгим NAT (CGNAT, мобильный интернет) WebRTC не пробивается
+// и «Подключение…» висит вечно. Свежие TURN-креды запрашиваем у metered.ca;
+// если их сервис недоступен — остаёмся на STUN (прямые соединения всё равно работают).
+const METERED_DOMAIN = ''; // например 'arenaduel.metered.live'
+const METERED_KEY = '';
+
+const FALLBACK_ICE = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+async function fetchIceConfig() {
+  if (!METERED_DOMAIN || !METERED_KEY) return { iceServers: FALLBACK_ICE };
+  try {
+    const r = await fetch(`https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_KEY}`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error(r.status);
+    const servers = await r.json();
+    return { iceServers: [...FALLBACK_ICE, ...servers] };
+  } catch (e) {
+    console.warn('TURN-креды недоступны, работаем только через STUN:', e);
+    return { iceServers: FALLBACK_ICE };
+  }
+}
 
 const Net = {
   peer: null,
@@ -1181,14 +1193,15 @@ const Net = {
     if (this.peer) { try { this.peer.destroy(); } catch {} this.peer = null; }
   },
 
-  host() {
+  async host() {
     this.cleanup();
     this.isHost = true;
     const code = Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
     $('room-code').textContent = code;
     $('host-status').innerHTML = 'Подключение к серверу<span class="dots"></span>';
 
-    this.peer = new Peer(codeToId(code), { config: ICE_CONFIG });
+    const ice = await fetchIceConfig();
+    this.peer = new Peer(codeToId(code), { config: ice });
     this.peer.on('open', () => {
       // сервер подтвердил код — хост сразу заходит на карту и ждёт в разминке
       UI.hide('net-screen');
@@ -1212,7 +1225,7 @@ const Net = {
     });
   },
 
-  join(code) {
+  async join(code) {
     this.cleanup();
     this.isHost = false;
     $('join-status').textContent = 'Подключение к серверу…';
@@ -1223,7 +1236,8 @@ const Net = {
         $('join-status').textContent = 'Не получилось подключиться. Проверь код и попробуй ещё раз.';
       }
     }, 25000);
-    this.peer = new Peer({ config: ICE_CONFIG });
+    const ice = await fetchIceConfig();
+    this.peer = new Peer({ config: ice });
     this.peer.on('open', () => {
       $('join-status').textContent = 'Комната найдена, устанавливаем соединение…';
       const conn = this.peer.connect(codeToId(code), { reliable: true });
