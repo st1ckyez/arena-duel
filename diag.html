@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Arena Duel — диагностика сети</title>
+<style>
+  body { background:#0b0e14; color:#dfe9ff; font-family:Consolas,monospace; padding:24px; max-width:800px; margin:0 auto; }
+  h1 { font-size:20px; color:#7ec8ff; }
+  #log { white-space:pre-wrap; background:#141a28; border:1px solid #2a3a5e; border-radius:8px; padding:16px; font-size:14px; line-height:1.6; min-height:200px; }
+  .ok { color:#5eff8a; } .fail { color:#ff6a5e; } .warn { color:#ffc24d; }
+  button { margin-top:16px; padding:10px 24px; font-size:16px; background:#2450c8; color:#fff; border:none; border-radius:8px; cursor:pointer; }
+</style>
+</head>
+<body>
+<h1>Диагностика сети Arena Duel</h1>
+<p>Тест запускается сам. Когда закончится — выдели весь текст ниже и пришли его.</p>
+<div id="log">запуск…</div>
+<button onclick="location.reload()">Повторить</button>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script>
+const log = document.getElementById('log');
+log.textContent = '';
+function line(cls, text) {
+  const s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text + '\n';
+  log.appendChild(s);
+}
+
+async function main() {
+  line('', 'Браузер: ' + navigator.userAgent);
+  line('', 'Время: ' + new Date().toISOString());
+
+  // 1. Сигнальный сервер PeerJS
+  await new Promise(resolve => {
+    const t0 = performance.now();
+    const p = new Peer();
+    const timer = setTimeout(() => { line('fail', '1. PeerJS-сервер: ТАЙМАУТ (15с) — брокер недоступен'); p.destroy(); resolve(); }, 15000);
+    p.on('open', id => {
+      clearTimeout(timer);
+      line('ok', `1. PeerJS-сервер: OK (${Math.round(performance.now() - t0)}мс, id получен)`);
+      p.destroy(); resolve();
+    });
+    p.on('error', e => { clearTimeout(timer); line('fail', '1. PeerJS-сервер: ОШИБКА ' + e.type); p.destroy(); resolve(); });
+  });
+
+  // 2. TURN-креды metered
+  let servers = null;
+  try {
+    const r = await fetch('https://shtduo.metered.live/api/v1/turn/credentials?apiKey=51a66b98b04d7c30ce75036f62b2622ba94d', { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    servers = await r.json();
+    line('ok', `2. TURN-креды metered: OK (${servers.length} серверов)`);
+  } catch (e) {
+    line('fail', '2. TURN-креды metered: ОШИБКА — ' + e.message);
+  }
+
+  // 3. Сбор ICE-кандидатов
+  if (servers) {
+    const types = await new Promise(resolve => {
+      const pc = new RTCPeerConnection({ iceServers: servers });
+      const found = new Set();
+      pc.onicecandidate = e => { if (e.candidate) { const m = e.candidate.candidate.match(/ typ (\w+)/); if (m) found.add(m[1]); } };
+      pc.createDataChannel('t');
+      pc.createOffer().then(o => pc.setLocalDescription(o));
+      setTimeout(() => { pc.close(); resolve([...found]); }, 8000);
+    });
+    const cls = types.includes('relay') ? 'ok' : 'fail';
+    line(cls, `3. ICE-кандидаты: ${types.join(', ') || 'НЕТ'}` + (types.includes('relay') ? ' — TURN работает' : ' — НЕТ relay! TURN не доступен из этой сети'));
+    if (!types.includes('srflx')) line('warn', '   (нет srflx — STUN тоже заблокирован, сеть очень строгая)');
+  }
+
+  // 4. Локальная петля через TURN-реле (полная проверка канала)
+  if (servers) {
+    const res = await new Promise(resolve => {
+      const cfg = { iceServers: servers, iceTransportPolicy: 'relay' };
+      const a = new RTCPeerConnection(cfg), b = new RTCPeerConnection(cfg);
+      const t0 = performance.now();
+      const timer = setTimeout(() => { a.close(); b.close(); resolve(null); }, 20000);
+      a.onicecandidate = e => e.candidate && b.addIceCandidate(e.candidate);
+      b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate);
+      const dc = a.createDataChannel('echo');
+      dc.onopen = () => dc.send('ping');
+      b.ondatachannel = ev => { ev.channel.onmessage = () => { clearTimeout(timer); const ms = Math.round(performance.now() - t0); a.close(); b.close(); resolve(ms); }; };
+      a.createOffer().then(o => a.setLocalDescription(o).then(() => b.setRemoteDescription(o)))
+        .then(() => b.createAnswer()).then(ans => b.setLocalDescription(ans).then(() => a.setRemoteDescription(ans)));
+    });
+    if (res !== null) line('ok', `4. Канал через TURN-реле: OK (установлен за ${res}мс)`);
+    else line('fail', '4. Канал через TURN-реле: НЕ УСТАНОВИЛСЯ за 20с');
+  }
+
+  line('', '--- конец теста ---');
+}
+main();
+</script>
+</body>
+</html>

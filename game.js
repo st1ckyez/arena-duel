@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
+const GAME_BUILD = 8; // видно в меню — чтобы ловить закешированные старые версии
+
 // =====================================================================
 //  ARENA DUEL — лоуполи-шутер для двоих: по сети (WebRTC) или сплит-скрин
 // =====================================================================
@@ -1189,6 +1191,8 @@ const Net = {
 
   cleanup() {
     clearTimeout(this.joinTimer);
+    clearTimeout(this.hostConnTimer);
+    clearInterval(this.diagTimer);
     if (this.conn) { try { this.conn.close(); } catch {} this.conn = null; }
     if (this.peer) { try { this.peer.destroy(); } catch {} this.peer = null; }
   },
@@ -1211,7 +1215,16 @@ const Net = {
       if (this.conn && this.conn.open) { conn.close(); return; } // уже играем
       if (this.conn) { try { this.conn.close(); } catch {} } // зависшая попытка — заменяем новой
       this.conn = conn;
-      conn.on('open', () => Game.beginCountdown());
+      // показываем хосту, что игрок найден и идёт пробивка соединения
+      const banner = $('warmup-banner');
+      banner.innerHTML = 'Игрок найден, устанавливаем соединение<span class="dots"></span>';
+      clearTimeout(this.hostConnTimer);
+      this.hostConnTimer = setTimeout(() => {
+        if (!this.conn || !this.conn.open) {
+          banner.innerHTML = `Не пробилось соединение (NAT). Пусть друг попробует ещё раз. Код: <b>${code}</b>`;
+        }
+      }, 25000);
+      conn.on('open', () => { clearTimeout(this.hostConnTimer); Game.beginCountdown(); });
       this.wireConn(conn);
     });
     // если пропала связь с сигнальным сервером (например, вкладку свернули) — переподключаемся;
@@ -1242,8 +1255,26 @@ const Net = {
       $('join-status').textContent = 'Комната найдена, устанавливаем соединение…';
       const conn = this.peer.connect(codeToId(code), { reliable: true });
       this.conn = conn;
+      // раз в секунду показываем реальное состояние ICE — видно, где застряло
+      clearInterval(this.diagTimer);
+      this.diagTimer = setInterval(() => {
+        const pc = this.conn && this.conn.peerConnection;
+        if (!pc || Game.state !== 'menu') return;
+        const labels = {
+          new: 'Комната найдена, ищем маршрут…',
+          checking: 'Комната найдена, пробиваем NAT…',
+          connected: 'Соединение установлено, финализируем…',
+          completed: 'Соединение установлено, финализируем…',
+          failed: 'Пробиться не удалось (NAT/файрвол). Попробуй ещё раз.',
+          disconnected: 'Соединение сорвалось, попробуй ещё раз.',
+        };
+        const st = pc.iceConnectionState;
+        if (labels[st]) $('join-status').textContent = labels[st];
+        if (st === 'failed') { clearInterval(this.diagTimer); }
+      }, 1000);
       conn.on('open', () => {
         clearTimeout(this.joinTimer);
+        clearInterval(this.diagTimer);
         UI.hide('net-screen');
         Game.setupNetRoles(false);
         Game.beginCountdown();
@@ -1416,7 +1447,8 @@ const Game = {
     this.remotePlayer.mesh.visible = false;
     this.remotePlayer.alive = false;
     this.remotePlayer.hpBar.visible = false;
-    $('warmup-code').textContent = code;
+    $('warmup-banner').innerHTML =
+      `Код комнаты: <b id="warmup-code">${code}</b> &nbsp;·&nbsp; ожидание второго игрока<span class="dots"></span>`;
     UI.show('warmup-banner');
     // запрос вне клика может не сработать — тогда останется подсказка
     $('click-hint').classList.remove('hidden');
@@ -1627,6 +1659,11 @@ Game.init();
 scene.updateMatrixWorld(true);
 resize();
 requestAnimationFrame(loop);
+
+const buildTag = document.createElement('div');
+buildTag.style.cssText = 'position:absolute;bottom:8px;right:12px;color:#5f7096;font-size:12px;letter-spacing:.1em;z-index:21;pointer-events:none';
+buildTag.textContent = 'build ' + GAME_BUILD;
+document.getElementById('menu').appendChild(buildTag);
 
 // отладка при локальной разработке
 if (location.hostname === 'localhost') {
