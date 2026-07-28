@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARENA DUEL — шутер для двоих</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e14; font-family: 'Segoe UI', system-ui, sans-serif; }
+  #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
+
+  /* ---------- overlay layers ---------- */
+  .layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .hidden { display: none !important; }
+
+  /* ---------- main menu ---------- */
+  #menu {
+    background: radial-gradient(ellipse at 50% 30%, rgba(30,40,70,.55), rgba(5,8,15,.92));
+    flex-direction: column; z-index: 20;
+  }
+  .title {
+    font-size: clamp(48px, 9vw, 110px); font-weight: 900; letter-spacing: .08em;
+    background: linear-gradient(180deg, #ffffff, #7ec8ff 55%, #2b6cff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 60px rgba(60,130,255,.35);
+    animation: float 4s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+  .subtitle { color: #8fa3c8; font-size: clamp(14px, 2vw, 20px); letter-spacing: .35em; margin-top: 6px; text-transform: uppercase; }
+
+  .menu-buttons { display: flex; flex-direction: column; gap: 16px; margin-top: 48px; width: min(340px, 80vw); }
+  .btn {
+    padding: 16px 32px; font-size: 20px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: #dfe9ff; background: linear-gradient(180deg, rgba(60,90,160,.35), rgba(25,40,80,.35));
+    border: 1px solid rgba(120,170,255,.45); border-radius: 12px; cursor: pointer;
+    transition: all .18s ease; backdrop-filter: blur(6px);
+  }
+  .btn:hover { background: linear-gradient(180deg, rgba(90,140,255,.55), rgba(40,70,150,.55)); border-color: #9cc4ff; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(70,130,255,.35); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary { background: linear-gradient(180deg, #3f7bff, #2450c8); border-color: #7ea8ff; box-shadow: 0 6px 24px rgba(60,110,255,.45); }
+  .btn.primary:hover { background: linear-gradient(180deg, #5c92ff, #2f5fe0); }
+
+  /* ---------- controls screen ---------- */
+  #controls-screen { background: rgba(6,9,16,.93); flex-direction: column; z-index: 25; }
+  .controls-wrap { display: flex; gap: clamp(20px, 5vw, 80px); flex-wrap: wrap; justify-content: center; }
+  .ctrl-card {
+    background: rgba(20,30,55,.6); border: 1px solid rgba(110,160,255,.3); border-radius: 16px;
+    padding: 28px 36px; min-width: 280px;
+  }
+  .ctrl-card h3 { font-size: 22px; letter-spacing: .1em; margin-bottom: 18px; text-transform: uppercase; }
+  .ctrl-card.p1 h3 { color: #5ea0ff; }
+  .ctrl-card.p2 h3 { color: #ff6a5e; }
+  .ctrl-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: 10px 0; color: #b9c7e2; font-size: 15px; }
+  .keys { display: flex; gap: 4px; }
+  .key {
+    display: inline-block; min-width: 34px; text-align: center; padding: 6px 9px;
+    background: linear-gradient(180deg, #2a3a5e, #16223d); border: 1px solid #4a6aa8; border-bottom-width: 3px;
+    border-radius: 7px; color: #e8f0ff; font-weight: 700; font-size: 13px; font-family: Consolas, monospace;
+  }
+  .screen-title { color: #e8f0ff; font-size: clamp(26px, 4vw, 40px); font-weight: 800; letter-spacing: .15em; margin-bottom: 34px; text-transform: uppercase; }
+
+  /* ---------- HUD ---------- */
+  #hud { z-index: 10; pointer-events: none; }
+  .hud-half { position: absolute; top: 0; bottom: 0; width: 50%; }
+  #hud-p1 { left: 0; } #hud-p2 { right: 0; }
+  .hud-bottom { position: absolute; bottom: 22px; left: 0; right: 0; display: flex; justify-content: center; }
+  .hud-panel {
+    display: flex; align-items: center; gap: 18px;
+    background: rgba(8,12,22,.55); border: 1px solid rgba(255,255,255,.12); border-radius: 14px;
+    padding: 10px 22px; backdrop-filter: blur(8px);
+  }
+  .hp-wrap { width: 190px; }
+  .hp-label { font-size: 11px; letter-spacing: .2em; color: #9fb2d5; margin-bottom: 4px; text-transform: uppercase; }
+  .hp-bar { height: 14px; background: rgba(255,255,255,.08); border-radius: 7px; overflow: hidden; }
+  .hp-fill { height: 100%; width: 100%; border-radius: 7px; transition: width .15s ease, background .2s; }
+  #hp1 .hp-fill { background: linear-gradient(90deg, #37c2ff, #2b6cff); }
+  #hp2 .hp-fill { background: linear-gradient(90deg, #ffb03a, #ff5e3a); }
+  .hud-score { font-size: 30px; font-weight: 900; color: #fff; min-width: 44px; text-align: center; text-shadow: 0 2px 10px rgba(0,0,0,.6); }
+  .hud-name { font-size: 13px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+  #hud-p1 .hud-name { color: #6eb1ff; } #hud-p2 .hud-name { color: #ff8a70; }
+  .respawn-msg {
+    position: absolute; top: 42%; left: 0; right: 0; text-align: center;
+    font-size: 30px; font-weight: 900; color: #ff5e5e; letter-spacing: .1em;
+    text-shadow: 0 2px 20px rgba(0,0,0,.8); text-transform: uppercase;
+  }
+  .divider { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; transform: translateX(-50%); background: linear-gradient(180deg, transparent, rgba(140,180,255,.5), transparent); z-index: 11; pointer-events: none; }
+
+  /* сетевой режим: один игрок на весь экран */
+  #hud.net .divider { display: none; }
+  #hud.net .hud-half { width: 100%; left: 0; right: 0; }
+  #hud.net .hud-half.off { display: none; }
+  #click-hint {
+    position: absolute; top: 60%; left: 0; right: 0; text-align: center; z-index: 13; pointer-events: none;
+    color: #fff; font-size: 18px; font-weight: 700; letter-spacing: .1em; text-shadow: 0 2px 12px rgba(0,0,0,.8);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+  .dots::after { content: ''; animation: dots 1.5s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+  .crosshair {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 22px; height: 22px; opacity: .85;
+  }
+  .crosshair::before, .crosshair::after { content: ''; position: absolute; background: rgba(255,255,255,.9); box-shadow: 0 0 6px rgba(0,0,0,.8); }
+  .crosshair::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
+  .crosshair::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
+
+  .hitmarker {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    color: #fff; font-size: 32px; font-weight: 900; line-height: 1;
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+    text-shadow: 0 0 8px rgba(255,80,80,.9), 0 0 3px rgba(0,0,0,.9);
+  }
+
+  /* center top score */
+  #match-info {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 14px; pointer-events: none;
+    background: rgba(8,12,22,.6); border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
+    padding: 8px 20px; backdrop-filter: blur(8px);
+  }
+  #match-info .s { font-size: 26px; font-weight: 900; }
+  #score-p1 { color: #5ea0ff; } #score-p2 { color: #ff6a5e; }
+  #match-info .vs { color: #7c8db0; font-size: 13px; font-weight: 700; letter-spacing: .2em; }
+
+  /* warmup + countdown */
+  #warmup-banner {
+    position: absolute; top: 70px; left: 50%; transform: translateX(-50%); z-index: 13;
+    background: rgba(8,12,22,.72); border: 1px solid rgba(126,200,255,.4); border-radius: 12px;
+    padding: 10px 24px; color: #b9c7e2; font-size: 16px; letter-spacing: .05em;
+    backdrop-filter: blur(8px); pointer-events: none; white-space: nowrap;
+  }
+  #warmup-banner b { color: #7ec8ff; font-family: Consolas, monospace; font-size: 20px; letter-spacing: .25em; }
+  #countdown { z-index: 26; pointer-events: none; background: rgba(4,6,12,.25); }
+  #countdown-num {
+    font-size: clamp(100px, 22vw, 200px); font-weight: 900; color: #fff;
+    text-shadow: 0 0 80px rgba(120,180,255,.9), 0 4px 20px rgba(0,0,0,.7);
+  }
+  #countdown-num.pop { animation: cd-pop .9s ease-out; }
+  @keyframes cd-pop { 0% { transform: scale(1.6); opacity: .2; } 30% { transform: scale(1); opacity: 1; } 100% { transform: scale(.94); opacity: .9; } }
+
+  /* kill feed */
+  #killfeed { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); z-index: 12; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+  .kill-msg {
+    background: rgba(8,12,22,.7); border: 1px solid rgba(255,255,255,.15); border-radius: 8px;
+    padding: 6px 16px; color: #e8f0ff; font-size: 14px; font-weight: 600;
+    animation: fadeout 3s forwards;
+  }
+  @keyframes fadeout { 0% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* damage vignette */
+  .dmg-vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .4s; }
+  #dmg1 { box-shadow: inset 0 0 120px 40px rgba(255,30,30,.55); }
+  #dmg2 { box-shadow: inset 0 0 120px 40px rgba(255,30,30,.55); }
+
+  /* ---------- game over ---------- */
+  #gameover { background: rgba(4,6,12,.88); flex-direction: column; z-index: 30; backdrop-filter: blur(10px); }
+  #winner-text { font-size: clamp(40px, 7vw, 84px); font-weight: 900; letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 0 60px currentColor; }
+  #final-score { color: #aebdda; font-size: 26px; margin: 18px 0 36px; font-weight: 600; }
+
+  /* pause */
+  #pause { background: rgba(4,6,12,.8); flex-direction: column; z-index: 28; backdrop-filter: blur(8px); }
+
+  .hint { position: absolute; bottom: 24px; left: 0; right: 0; text-align: center; color: #5f7096; font-size: 13px; letter-spacing: .15em; }
+</style>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<!-- ============ MAIN MENU ============ -->
+<div id="menu" class="layer">
+  <div class="title">ARENA DUEL</div>
+  <div class="subtitle">лоуполи-шутер для двоих</div>
+  <div class="menu-buttons">
+    <button class="btn primary" id="btn-net">Игра по сети</button>
+    <button class="btn" id="btn-play">Локально (один экран)</button>
+    <button class="btn" id="btn-controls">Управление</button>
+  </div>
+  <div class="hint">Первый, кто наберёт 10 фрагов — побеждает</div>
+</div>
+
+<!-- ============ NETWORK LOBBY ============ -->
+<div id="net-screen" class="layer hidden">
+  <div style="display:flex;flex-direction:column;align-items:center">
+    <div class="screen-title">Игра по сети</div>
+
+    <div id="net-choice" class="menu-buttons">
+      <button class="btn primary" id="btn-host">Создать игру</button>
+      <button class="btn" id="btn-join">Присоединиться</button>
+      <button class="btn" id="btn-net-back">Назад</button>
+    </div>
+
+    <div id="net-host" class="hidden" style="text-align:center">
+      <div style="color:#8fa3c8;font-size:16px;letter-spacing:.1em">Код комнаты — продиктуй его другу:</div>
+      <div id="room-code" style="font-size:64px;font-weight:900;letter-spacing:.3em;color:#7ec8ff;margin:18px 0;font-family:Consolas,monospace;text-shadow:0 0 40px rgba(60,130,255,.5)">·····</div>
+      <div id="host-status" style="color:#8fa3c8;font-size:15px">Ожидание подключения<span class="dots">…</span></div>
+      <div style="margin-top:28px"><button class="btn" id="btn-host-cancel">Отмена</button></div>
+    </div>
+
+    <div id="net-join" class="hidden" style="text-align:center">
+      <div style="color:#8fa3c8;font-size:16px;letter-spacing:.1em;margin-bottom:16px">Введи код комнаты:</div>
+      <input id="join-code" maxlength="5" autocomplete="off" spellcheck="false"
+        style="width:280px;padding:14px;font-size:36px;font-weight:900;letter-spacing:.3em;text-align:center;text-transform:uppercase;
+               background:rgba(20,30,55,.7);border:1px solid rgba(120,170,255,.5);border-radius:12px;color:#e8f0ff;font-family:Consolas,monospace;outline:none">
+      <div id="join-status" style="color:#8fa3c8;font-size:15px;margin-top:14px;min-height:20px"></div>
+      <div class="menu-buttons" style="margin-top:22px">
+        <button class="btn primary" id="btn-join-go">Подключиться</button>
+        <button class="btn" id="btn-join-cancel">Назад</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DISCONNECT ============ -->
+<div id="net-lost" class="layer hidden" style="background:rgba(4,6,12,.88);flex-direction:column;z-index:35;backdrop-filter:blur(10px)">
+  <div class="screen-title" style="color:#ff6a5e">Соединение потеряно</div>
+  <div class="menu-buttons"><button class="btn primary" id="btn-lost-menu">В меню</button></div>
+</div>
+
+<!-- ============ CONTROLS ============ -->
+<div id="controls-screen" class="layer hidden">
+  <div class="screen-title">Управление</div>
+  <div class="controls-wrap">
+    <div class="ctrl-card" style="border-color:rgba(126,200,255,.5)">
+      <h3 style="color:#7ec8ff">Игра по сети</h3>
+      <div class="ctrl-row"><span>Движение</span><span class="keys"><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span></span></div>
+      <div class="ctrl-row"><span>Поворот / прицел</span><span class="keys"><span class="key">Мышь</span></span></div>
+      <div class="ctrl-row"><span>Огонь</span><span class="keys"><span class="key">ЛКМ</span></span></div>
+      <div class="ctrl-row"><span>Прыжок</span><span class="keys"><span class="key">Space</span></span></div>
+      <div class="ctrl-row"><span>Присед</span><span class="keys"><span class="key">C</span></span></div>
+      <div class="ctrl-row"><span>Меню</span><span class="keys"><span class="key">Esc</span></span></div>
+    </div>
+    <div class="ctrl-card p1">
+      <h3>Локально: Игрок 1</h3>
+      <div class="ctrl-row"><span>Вперёд / назад</span><span class="keys"><span class="key">W</span><span class="key">S</span></span></div>
+      <div class="ctrl-row"><span>Поворот</span><span class="keys"><span class="key">A</span><span class="key">D</span></span></div>
+      <div class="ctrl-row"><span>Шаг вбок</span><span class="keys"><span class="key">Q</span><span class="key">E</span></span></div>
+      <div class="ctrl-row"><span>Огонь</span><span class="keys"><span class="key">Space</span></span></div>
+    </div>
+    <div class="ctrl-card p2">
+      <h3>Локально: Игрок 2</h3>
+      <div class="ctrl-row"><span>Вперёд / назад</span><span class="keys"><span class="key">↑</span><span class="key">↓</span></span></div>
+      <div class="ctrl-row"><span>Поворот</span><span class="keys"><span class="key">←</span><span class="key">→</span></span></div>
+      <div class="ctrl-row"><span>Шаг вбок</span><span class="keys"><span class="key">,</span><span class="key">.</span></span></div>
+      <div class="ctrl-row"><span>Огонь</span><span class="keys"><span class="key">Enter</span></span></div>
+    </div>
+  </div>
+  <div style="margin-top:36px"><button class="btn" id="btn-back">Назад</button></div>
+  <div class="hint">Esc во время игры — пауза · Аптечки на карте восстанавливают 50 HP</div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="layer hidden">
+  <div class="divider"></div>
+  <div id="click-hint" class="hidden">Кликни по экрану, чтобы захватить мышь</div>
+  <div id="match-info">
+    <span class="s" id="score-p1">0</span><span class="vs">VS</span><span class="s" id="score-p2">0</span>
+  </div>
+  <div id="killfeed"></div>
+  <div id="warmup-banner" class="hidden">Код комнаты: <b id="warmup-code">·····</b> &nbsp;·&nbsp; ожидание второго игрока<span class="dots"></span></div>
+  <div class="hud-half" id="hud-p1">
+    <div class="crosshair"></div>
+    <div class="hitmarker" id="hm1">✕</div>
+    <div class="dmg-vignette" id="dmg1"></div>
+    <div class="respawn-msg hidden" id="respawn1">Возрождение…</div>
+    <div class="hud-bottom">
+      <div class="hud-panel">
+        <span class="hud-name">Синий</span>
+        <div class="hp-wrap" id="hp1"><div class="hp-label">Здоровье</div><div class="hp-bar"><div class="hp-fill"></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="hud-half" id="hud-p2">
+    <div class="crosshair"></div>
+    <div class="hitmarker" id="hm2">✕</div>
+    <div class="dmg-vignette" id="dmg2"></div>
+    <div class="respawn-msg hidden" id="respawn2">Возрождение…</div>
+    <div class="hud-bottom">
+      <div class="hud-panel">
+        <span class="hud-name">Красный</span>
+        <div class="hp-wrap" id="hp2"><div class="hp-label">Здоровье</div><div class="hp-bar"><div class="hp-fill"></div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ COUNTDOWN ============ -->
+<div id="countdown" class="layer hidden">
+  <div id="countdown-num">5</div>
+</div>
+
+<!-- ============ PAUSE ============ -->
+<div id="pause" class="layer hidden">
+  <div class="screen-title">Пауза</div>
+  <div class="menu-buttons">
+    <button class="btn primary" id="btn-resume">Продолжить</button>
+    <button class="btn" id="btn-quit">В меню</button>
+  </div>
+</div>
+
+<!-- ============ GAME OVER ============ -->
+<div id="gameover" class="layer hidden">
+  <div id="winner-text">Победа!</div>
+  <div id="final-score">0 : 0</div>
+  <div class="menu-buttons">
+    <button class="btn primary" id="btn-rematch">Реванш</button>
+    <button class="btn" id="btn-menu">В меню</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="game.js"></script>
+</body>
+</html>
