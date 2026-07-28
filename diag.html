@@ -71,23 +71,46 @@ async function main() {
     if (!types.includes('srflx')) line('warn', '   (нет srflx — STUN тоже заблокирован, сеть очень строгая)');
   }
 
-  // 4. Локальная петля через TURN-реле (полная проверка канала)
-  if (servers) {
-    const res = await new Promise(resolve => {
-      const cfg = { iceServers: servers, iceTransportPolicy: 'relay' };
+  // Петля из двух соединений: надёжный обмен кандидатами (с буферизацией
+  // до установки remoteDescription) и телеметрия состояний ICE
+  async function loopTest(cfg, timeoutMs) {
+    return new Promise(async resolve => {
       const a = new RTCPeerConnection(cfg), b = new RTCPeerConnection(cfg);
       const t0 = performance.now();
-      const timer = setTimeout(() => { a.close(); b.close(); resolve(null); }, 20000);
-      a.onicecandidate = e => e.candidate && b.addIceCandidate(e.candidate);
-      b.onicecandidate = e => e.candidate && a.addIceCandidate(e.candidate);
+      const states = [];
+      const qa = [], qb = [];
+      const add = (pc, cand, q) => { if (pc.remoteDescription) pc.addIceCandidate(cand).catch(() => {}); else q.push(cand); };
+      const flush = (pc, q) => { for (const c of q) pc.addIceCandidate(c).catch(() => {}); q.length = 0; };
+      a.onicecandidate = e => e.candidate && add(b, e.candidate, qb);
+      b.onicecandidate = e => e.candidate && add(a, e.candidate, qa);
+      a.oniceconnectionstatechange = () => states.push('a:' + a.iceConnectionState);
+      b.oniceconnectionstatechange = () => states.push('b:' + b.iceConnectionState);
+      const finish = ms => { a.close(); b.close(); resolve({ ms, states }); };
+      const timer = setTimeout(() => finish(null), timeoutMs);
       const dc = a.createDataChannel('echo');
       dc.onopen = () => dc.send('ping');
-      b.ondatachannel = ev => { ev.channel.onmessage = () => { clearTimeout(timer); const ms = Math.round(performance.now() - t0); a.close(); b.close(); resolve(ms); }; };
-      a.createOffer().then(o => a.setLocalDescription(o).then(() => b.setRemoteDescription(o)))
-        .then(() => b.createAnswer()).then(ans => b.setLocalDescription(ans).then(() => a.setRemoteDescription(ans)));
+      b.ondatachannel = ev => { ev.channel.onmessage = () => { clearTimeout(timer); finish(Math.round(performance.now() - t0)); }; };
+      const offer = await a.createOffer();
+      await a.setLocalDescription(offer);
+      await b.setRemoteDescription(offer);
+      flush(b, qb);
+      const answer = await b.createAnswer();
+      await b.setLocalDescription(answer);
+      await a.setRemoteDescription(answer);
+      flush(a, qa);
     });
-    if (res !== null) line('ok', `4. Канал через TURN-реле: OK (установлен за ${res}мс)`);
-    else line('fail', '4. Канал через TURN-реле: НЕ УСТАНОВИЛСЯ за 20с');
+  }
+
+  // 4. Петля без ограничений (проверка, что сам тест работает на этой машине)
+  if (servers) {
+    const r4 = await loopTest({ iceServers: servers }, 15000);
+    if (r4.ms !== null) line('ok', `4. Петля напрямую: OK (${r4.ms}мс)`);
+    else line('fail', `4. Петля напрямую: FAIL [${r4.states.join(' ')}]`);
+
+    // 5. Петля строго через TURN-реле
+    const r5 = await loopTest({ iceServers: servers, iceTransportPolicy: 'relay' }, 30000);
+    if (r5.ms !== null) line('ok', `5. Канал через TURN-реле: OK (${r5.ms}мс)`);
+    else line('fail', `5. Канал через TURN-реле: FAIL за 30с [${r5.states.join(' ')}]`);
   }
 
   line('', '--- конец теста ---');
