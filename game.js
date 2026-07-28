@@ -1157,6 +1157,18 @@ const UI = {
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // без похожих символов
 const codeToId = code => 'arena-duel-v1-' + code.toUpperCase();
 
+// STUN + бесплатные TURN-реле (Open Relay): без TURN за строгим NAT
+// соединение не устанавливается и «Подключение…» висит вечно
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+};
+
 const Net = {
   peer: null,
   conn: null,
@@ -1164,6 +1176,7 @@ const Net = {
   sendTimer: 0,
 
   cleanup() {
+    clearTimeout(this.joinTimer);
     if (this.conn) { try { this.conn.close(); } catch {} this.conn = null; }
     if (this.peer) { try { this.peer.destroy(); } catch {} this.peer = null; }
   },
@@ -1175,14 +1188,15 @@ const Net = {
     $('room-code').textContent = code;
     $('host-status').innerHTML = 'Подключение к серверу<span class="dots"></span>';
 
-    this.peer = new Peer(codeToId(code));
+    this.peer = new Peer(codeToId(code), { config: ICE_CONFIG });
     this.peer.on('open', () => {
       // сервер подтвердил код — хост сразу заходит на карту и ждёт в разминке
       UI.hide('net-screen');
       Game.startWarmup(code);
     });
     this.peer.on('connection', conn => {
-      if (this.conn) { conn.close(); return; } // уже есть противник
+      if (this.conn && this.conn.open) { conn.close(); return; } // уже играем
+      if (this.conn) { try { this.conn.close(); } catch {} } // зависшая попытка — заменяем новой
       this.conn = conn;
       conn.on('open', () => Game.beginCountdown());
       this.wireConn(conn);
@@ -1201,12 +1215,21 @@ const Net = {
   join(code) {
     this.cleanup();
     this.isHost = false;
-    $('join-status').textContent = 'Подключение…';
-    this.peer = new Peer();
+    $('join-status').textContent = 'Подключение к серверу…';
+    // если за разумное время не соединились — говорим об этом, а не висим молча
+    this.joinTimer = setTimeout(() => {
+      if (!this.conn || !this.conn.open) {
+        this.cleanup();
+        $('join-status').textContent = 'Не получилось подключиться. Проверь код и попробуй ещё раз.';
+      }
+    }, 25000);
+    this.peer = new Peer({ config: ICE_CONFIG });
     this.peer.on('open', () => {
+      $('join-status').textContent = 'Комната найдена, устанавливаем соединение…';
       const conn = this.peer.connect(codeToId(code), { reliable: true });
       this.conn = conn;
       conn.on('open', () => {
+        clearTimeout(this.joinTimer);
         UI.hide('net-screen');
         Game.setupNetRoles(false);
         Game.beginCountdown();
@@ -1233,6 +1256,9 @@ const Net = {
       UI.hide('pause'); UI.hide('countdown'); UI.hide('warmup-banner');
       UI.show('net-lost');
       Game.state = 'netlost';
+    } else if (s === 'menu') {
+      // сорвалось ещё на этапе подключения — показываем на экране ввода кода
+      $('join-status').textContent = 'Соединение сорвалось. Попробуй ещё раз.';
     }
     this.cleanup();
   },
